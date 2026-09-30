@@ -7,4 +7,8 @@ on:
 
 jobs:
   generate:
-    uses: symbioticfi/metadata-validation-scripts/.github/workflows/full-info.yml@main
+    # Pinned to an exact commit SHA rather than the floating `@main`. A tag/branch
+    # reference lets the upstream repository change what this workflow executes
+    # after review, which turns a dependency bump into unreviewed code execution
+    # inside our pipeline. Re-pin deliberately when updating upstream.
+    uses: symbioticfi/metadata-validation-scripts/.github/workflows/full-info.yml@a21a6f01a2b6c5fda769e0c7c0b55d79172568f6
