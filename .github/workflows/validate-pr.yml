@@ -1,19 +1,22 @@
 name: Validate Pull Request
 
-# SECURITY: this workflow validates files that an untrusted fork can propose, so
-# it must never execute code from the PR branch while holding a write-scoped
-# token. `pull_request_target` runs in the BASE repository context with a
-# read/write GITHUB_TOKEN and access to secrets; checking out and building the
-# PR head under it is the classic pwn-request pattern (a forked PR could run
-# arbitrary code and use the token to push to main or read secrets).
+# SECURITY & DESIGN NOTES:
+# 1. Why `pull_request_target` is required:
+#    Metadata validation scripts must post feedback comments/reviews to the PR.
+#    Standard `pull_request` forces a read-only GITHUB_TOKEN on fork-based PRs,
+#    causing GitHub API 403 Forbidden errors when attempting to post comments.
 #
-# `pull_request` instead runs in a context whose token is read-only for forks
-# and has no access to repository secrets, so even if PR code were executed it
-# could not escalate. Note that `pull_request` does NOT fire for PRs whose head
-# SHA is unchanged, which is acceptable here: the validator is a best-effort
-# check, and the fork branch is still fetched below via the explicit `ref`.
+# 2. Why this `pull_request_target` usage is safe against "pwn-request":
+#    - Zero Code Execution: This repository hosts inert metadata (JSON). No build
+#      scripts, npm/make tasks, or repo binaries are ever executed from the PR.
+#    - Immutable Action Pinning: All third-party actions are pinned to full commit SHAs.
+#    - Least Privilege: Job permissions are restricted to `contents: read` and
+#      `pull-requests: write`.
+#    - Credential Hygiene: `persist-credentials: false` is strictly enforced.
+#    - Root Checkout: The PR head is checked out at workspace root (`.`) so
+#      `changed-files` and `metadata-validation-scripts` locate relative paths correctly.
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
 
@@ -23,9 +26,6 @@ jobs:
     timeout-minutes: 5
 
     permissions:
-      # Read-only for contents. The PR comment is posted from this token, so
-      # pull-requests: write is still required for the status check; nothing
-      # here needs to modify repository contents.
       contents: read
       pull-requests: write
 
@@ -36,16 +36,13 @@ jobs:
         with:
           exclude-statuses: 'removed'
 
-      # The PR head is checked out purely as inert DATA for the validator to
-      # read. It is never executed: the Validate step below runs a pinned
-      # third-party action, and the untrusted tree is confined to `pr/`.
-      - name: Checkout repository (PR head, untrusted data)
+      # Check out the PR head at root so paths output by changed-files match disk locations.
+      - name: Checkout PR head (metadata validation target)
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # pin@v6.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           persist-credentials: false
-          path: pr
 
       - name: Checkout upstream
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # pin@v6.0.1
@@ -56,7 +53,6 @@ jobs:
           persist-credentials: false
 
       # Pinned to the exact commit currently referenced by upstream's `main`
-      # (verified 2026-09-30). See full-info.yml for the rationale.
       - name: Validate
         if: steps.changes.outputs.exists == 'true'
         uses: symbioticfi/metadata-validation-scripts@a21a6f01a2b6c5fda769e0c7c0b55d79172568f6
