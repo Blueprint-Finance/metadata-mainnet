@@ -1,5 +1,20 @@
 name: Validate Pull Request
 
+# SECURITY & DESIGN NOTES:
+# 1. Why `pull_request_target` is required:
+#    Metadata validation scripts must post feedback comments/reviews to the PR.
+#    Standard `pull_request` forces a read-only GITHUB_TOKEN on fork-based PRs,
+#    causing GitHub API 403 Forbidden errors when attempting to post comments.
+#
+# 2. Why this `pull_request_target` usage is safe against "pwn-request":
+#    - Zero Code Execution: This repository hosts inert metadata (JSON). No build
+#      scripts, npm/make tasks, or repo binaries are ever executed from the PR.
+#    - Immutable Action Pinning: All third-party actions are pinned to full commit SHAs.
+#    - Least Privilege: Job permissions are restricted to `contents: read` and
+#      `pull-requests: write`.
+#    - Credential Hygiene: `persist-credentials: false` is strictly enforced.
+#    - Root Checkout: The PR head is checked out at workspace root (`.`) so
+#      `changed-files` and `metadata-validation-scripts` locate relative paths correctly.
 on:
   pull_request_target:
     branches:
@@ -11,6 +26,7 @@ jobs:
     timeout-minutes: 5
 
     permissions:
+      contents: read
       pull-requests: write
 
     steps:
@@ -20,11 +36,13 @@ jobs:
         with:
           exclude-statuses: 'removed'
 
-      - name: Checkout repository
+      # Check out the PR head at root so paths output by changed-files match disk locations.
+      - name: Checkout PR head (metadata validation target)
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # pin@v6.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
 
       - name: Checkout upstream
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # pin@v6.0.1
@@ -32,10 +50,12 @@ jobs:
           path: upstream
           ref: main
           repository: ${{ github.event.pull_request.base.repo.full_name }}
+          persist-credentials: false
 
+      # Pinned to the exact commit currently referenced by upstream's `main`
       - name: Validate
         if: steps.changes.outputs.exists == 'true'
-        uses: symbioticfi/metadata-validation-scripts@main
+        uses: symbioticfi/metadata-validation-scripts@a21a6f01a2b6c5fda769e0c7c0b55d79172568f6
         with:
           files: ${{ steps.changes.outputs.files }}
           issue: ${{ github.event.number }}
